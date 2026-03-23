@@ -13,8 +13,19 @@ from .journals import JournalManager
 from .logging_config import setup_logging
 from .tasks import TaskManager
 from .tools import register_all_tools
+from .transport import get_auth_token, mask_token
 
 logger = setup_logging()
+
+# Log token auth status at startup (actual enforcement is done by
+# TokenAuthMiddleware wired up in __main__.py, not by FastMCP's OAuth-based
+# auth pipeline which would conflict with our simpler middleware approach).
+_expected_token = get_auth_token()
+if _expected_token:
+    logger.info(
+        "Token authentication enabled for HTTP transport (expected=%s)",
+        mask_token(_expected_token),
+    )
 
 mcp = FastMCP("chronos-mcp")
 
