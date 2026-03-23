@@ -56,6 +56,10 @@ class QueryStringTokenMiddleware:
                         name.lower() == b"authorization" for name, _ in headers
                     )
                     if not has_auth:
+                        logger.debug(
+                            "Injecting query-string token as Bearer header (token=%s)",
+                            mask_token(token_values[0]),
+                        )
                         headers.append(
                             (
                                 b"authorization",
@@ -63,6 +67,11 @@ class QueryStringTokenMiddleware:
                             )
                         )
                         scope = dict(scope, headers=headers)
+                    else:
+                        logger.debug(
+                            "Authorization header already present, skipping "
+                            "query-string token injection"
+                        )
 
         await self.app(scope, receive, send)
 
@@ -76,9 +85,7 @@ def get_transport_config() -> dict:
         "transport": os.environ.get(ENV_TRANSPORT, DEFAULT_TRANSPORT),
         "host": os.environ.get(ENV_HOST, DEFAULT_HOST),
         "port": int(
-            os.environ.get(ENV_PORT)
-            or os.environ.get("PORT")
-            or str(DEFAULT_PORT)
+            os.environ.get(ENV_PORT) or os.environ.get("PORT") or str(DEFAULT_PORT)
         ),
     }
 
@@ -88,6 +95,19 @@ def get_auth_token() -> str | None:
     return os.environ.get(ENV_AUTH_TOKEN) or None
 
 
+def mask_token(token: str) -> str:
+    """Return a masked version of *token* safe for logging.
+
+    Shows the first 4 characters followed by ``***``.  For very short
+    tokens (≤4 chars) only the first character is shown.
+    """
+    if not token:
+        return "<empty>"
+    if len(token) <= 4:
+        return token[0] + "***"
+    return token[:4] + "***"
+
+
 def create_token_validator(expected_token: str) -> Callable[[str], bool]:
     """Return a callable suitable for ``DebugTokenVerifier(validate=...)``.
 
@@ -95,6 +115,15 @@ def create_token_validator(expected_token: str) -> Callable[[str], bool]:
     """
 
     def _validate(token: str) -> bool:
-        return secrets.compare_digest(token, expected_token)
+        result = secrets.compare_digest(token, expected_token)
+        if result:
+            logger.debug("Token validation succeeded (token=%s)", mask_token(token))
+        else:
+            logger.warning(
+                "Token validation failed (received=%s, expected=%s)",
+                mask_token(token),
+                mask_token(expected_token),
+            )
+        return result
 
     return _validate

@@ -7,11 +7,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from chronos_mcp.transport import (DEFAULT_HOST, DEFAULT_PORT,
-                                   DEFAULT_TRANSPORT,
-                                   QueryStringTokenMiddleware,
-                                   create_token_validator, get_auth_token,
-                                   get_transport_config)
+from chronos_mcp.transport import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    DEFAULT_TRANSPORT,
+    QueryStringTokenMiddleware,
+    mask_token,
+    create_token_validator,
+    get_auth_token,
+    get_transport_config,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +92,26 @@ class TestCreateTokenValidator:
             validate = create_token_validator("tok")
             validate("tok")
             mock_cmp.assert_called_once_with("tok", "tok")
+
+
+# ---------------------------------------------------------------------------
+# mask_token
+# ---------------------------------------------------------------------------
+class TestMaskToken:
+    def test_empty_token(self):
+        assert mask_token("") == "<empty>"
+
+    def test_short_token(self):
+        assert mask_token("ab") == "a***"
+
+    def test_four_char_token(self):
+        assert mask_token("abcd") == "a***"
+
+    def test_long_token(self):
+        assert mask_token("my-secret-token") == "my-s***"
+
+    def test_five_char_token(self):
+        assert mask_token("abcde") == "abcd***"
 
 
 # ---------------------------------------------------------------------------
