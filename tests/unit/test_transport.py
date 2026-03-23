@@ -2,6 +2,7 @@
 Unit tests for chronos_mcp.transport module.
 """
 
+import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -11,11 +12,10 @@ from chronos_mcp.transport import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     DEFAULT_TRANSPORT,
-    QueryStringTokenMiddleware,
-    mask_token,
-    create_token_validator,
+    TokenAuthMiddleware,
     get_auth_token,
     get_transport_config,
+    mask_token,
 )
 
 
@@ -69,32 +69,6 @@ class TestGetAuthToken:
 
 
 # ---------------------------------------------------------------------------
-# create_token_validator
-# ---------------------------------------------------------------------------
-class TestCreateTokenValidator:
-    def test_matching_token(self):
-        validate = create_token_validator("my-token")
-        assert validate("my-token") is True
-
-    def test_non_matching_token(self):
-        validate = create_token_validator("my-token")
-        assert validate("wrong-token") is False
-
-    def test_empty_token(self):
-        validate = create_token_validator("my-token")
-        assert validate("") is False
-
-    def test_constant_time(self):
-        """Validator uses secrets.compare_digest (constant-time)."""
-        import secrets
-
-        with patch.object(secrets, "compare_digest", return_value=True) as mock_cmp:
-            validate = create_token_validator("tok")
-            validate("tok")
-            mock_cmp.assert_called_once_with("tok", "tok")
-
-
-# ---------------------------------------------------------------------------
 # mask_token
 # ---------------------------------------------------------------------------
 class TestMaskToken:
@@ -115,133 +89,187 @@ class TestMaskToken:
 
 
 # ---------------------------------------------------------------------------
-# QueryStringTokenMiddleware
+# TokenAuthMiddleware
 # ---------------------------------------------------------------------------
-class TestQueryStringTokenMiddleware:
+
+
+class TestTokenAuthMiddleware:
+    SECRET = "my-secret-token"
+
+    def _make_middleware(self, inner_app=None):
+        if inner_app is None:
+            inner_app = AsyncMock()
+        return TokenAuthMiddleware(inner_app, expected_token=self.SECRET), inner_app
+
+    # --- Valid token via query string ---
     @pytest.mark.asyncio
-    async def test_injects_bearer_from_query_string(self):
-        """Token in query string is converted to Authorization header."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
+    async def test_valid_token_query_string(self):
+        mw, inner = self._make_middleware()
         scope = {
             "type": "http",
-            "query_string": b"token=abc123",
+            "query_string": b"token=my-secret-token",
             "headers": [],
         }
-        await middleware(scope, AsyncMock(), AsyncMock())
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
 
-        headers = dict(captured_scope["headers"])
-        assert headers[b"authorization"] == b"Bearer abc123"
-
+    # --- Valid token via Authorization header ---
     @pytest.mark.asyncio
-    async def test_does_not_override_existing_auth_header(self):
-        """Existing Authorization header takes precedence."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
+    async def test_valid_token_bearer_header(self):
+        mw, inner = self._make_middleware()
         scope = {
             "type": "http",
-            "query_string": b"token=qs-token",
-            "headers": [(b"authorization", b"Bearer existing-token")],
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer my-secret-token")],
         }
-        await middleware(scope, AsyncMock(), AsyncMock())
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
 
-        headers = dict(captured_scope["headers"])
-        assert headers[b"authorization"] == b"Bearer existing-token"
-
+    # --- Header takes precedence over query string ---
     @pytest.mark.asyncio
-    async def test_no_token_in_query_string(self):
-        """Without ?token= the scope is passed through unchanged."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
+    async def test_header_takes_precedence(self):
+        mw, inner = self._make_middleware()
         scope = {
             "type": "http",
-            "query_string": b"foo=bar",
+            "query_string": b"token=wrong-token",
+            "headers": [(b"authorization", b"Bearer my-secret-token")],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    # --- Invalid token returns 401 ---
+    @pytest.mark.asyncio
+    async def test_wrong_token_returns_401(self):
+        mw, inner = self._make_middleware()
+        send = AsyncMock()
+        scope = {
+            "type": "http",
+            "query_string": b"token=wrong",
             "headers": [],
         }
-        await middleware(scope, AsyncMock(), AsyncMock())
+        await mw(scope, AsyncMock(), send)
+        inner.assert_not_awaited()
+        # Check that a 401 was sent
+        assert send.await_count == 2
+        start_msg = send.await_args_list[0][0][0]
+        assert start_msg["status"] == 401
 
-        headers = dict(captured_scope.get("headers", []))
-        assert b"authorization" not in headers
-
+    # --- Missing token returns 401 ---
     @pytest.mark.asyncio
-    async def test_empty_query_string(self):
-        """Empty query string passes through."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
+    async def test_missing_token_returns_401(self):
+        mw, inner = self._make_middleware()
+        send = AsyncMock()
         scope = {
             "type": "http",
             "query_string": b"",
             "headers": [],
         }
-        await middleware(scope, AsyncMock(), AsyncMock())
+        await mw(scope, AsyncMock(), send)
+        inner.assert_not_awaited()
+        start_msg = send.await_args_list[0][0][0]
+        assert start_msg["status"] == 401
 
-        headers = dict(captured_scope.get("headers", []))
-        assert b"authorization" not in headers
-
+    # --- 401 response is valid JSON ---
     @pytest.mark.asyncio
-    async def test_websocket_scope(self):
-        """Middleware also handles websocket scopes."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
-        scope = {
-            "type": "websocket",
-            "query_string": b"token=ws-token",
-            "headers": [],
-        }
-        await middleware(scope, AsyncMock(), AsyncMock())
-
-        headers = dict(captured_scope["headers"])
-        assert headers[b"authorization"] == b"Bearer ws-token"
-
-    @pytest.mark.asyncio
-    async def test_non_http_scope_passthrough(self):
-        """Non-http/websocket scopes (e.g. lifespan) pass through."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
-        scope = {"type": "lifespan"}
-        await middleware(scope, AsyncMock(), AsyncMock())
-
-        assert captured_scope["type"] == "lifespan"
-
-    @pytest.mark.asyncio
-    async def test_multiple_token_params_uses_first(self):
-        """When multiple token= params exist, the first is used."""
-        captured_scope = {}
-
-        async def inner_app(scope, receive, send):
-            captured_scope.update(scope)
-
-        middleware = QueryStringTokenMiddleware(inner_app)
+    async def test_401_body_is_json(self):
+        mw, _ = self._make_middleware()
+        send = AsyncMock()
         scope = {
             "type": "http",
-            "query_string": b"token=first&token=second",
+            "query_string": b"token=bad",
             "headers": [],
         }
-        await middleware(scope, AsyncMock(), AsyncMock())
+        await mw(scope, AsyncMock(), send)
+        body_msg = send.await_args_list[1][0][0]
+        body = json.loads(body_msg["body"])
+        assert body["error"] == "invalid_token"
 
-        headers = dict(captured_scope["headers"])
-        assert headers[b"authorization"] == b"Bearer first"
+    # --- Non-HTTP scope passes through without auth ---
+    @pytest.mark.asyncio
+    async def test_lifespan_passthrough(self):
+        mw, inner = self._make_middleware()
+        scope = {"type": "lifespan"}
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    # --- Websocket scope is also validated ---
+    @pytest.mark.asyncio
+    async def test_websocket_valid_token(self):
+        mw, inner = self._make_middleware()
+        scope = {
+            "type": "websocket",
+            "query_string": b"token=my-secret-token",
+            "headers": [],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    # --- Empty query string without token → 401 ---
+    @pytest.mark.asyncio
+    async def test_empty_query_string_401(self):
+        mw, inner = self._make_middleware()
+        send = AsyncMock()
+        scope = {
+            "type": "http",
+            "query_string": b"foo=bar",
+            "headers": [],
+        }
+        await mw(scope, AsyncMock(), send)
+        inner.assert_not_awaited()
+        start_msg = send.await_args_list[0][0][0]
+        assert start_msg["status"] == 401
+
+    # --- Multiple token params uses first ---
+    @pytest.mark.asyncio
+    async def test_multiple_token_params_uses_first(self):
+        mw, inner = self._make_middleware()
+        scope = {
+            "type": "http",
+            "query_string": b"token=my-secret-token&token=wrong",
+            "headers": [],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    # --- Constant-time comparison used ---
+    @pytest.mark.asyncio
+    async def test_uses_constant_time_comparison(self):
+        """Token comparison uses secrets.compare_digest."""
+        import secrets
+
+        mw, inner = self._make_middleware()
+        with patch.object(secrets, "compare_digest", return_value=True) as mock_cmp:
+            scope = {
+                "type": "http",
+                "query_string": b"token=test",
+                "headers": [],
+            }
+            await mw(scope, AsyncMock(), AsyncMock())
+            mock_cmp.assert_called_once_with("test", self.SECRET)
+
+    # --- Bearer prefix is case-insensitive ---
+    @pytest.mark.asyncio
+    async def test_bearer_case_insensitive(self):
+        mw, inner = self._make_middleware()
+        scope = {
+            "type": "http",
+            "query_string": b"",
+            "headers": [(b"authorization", b"bearer my-secret-token")],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    # --- Non-Bearer auth header is rejected ---
+    @pytest.mark.asyncio
+    async def test_non_bearer_auth_header_rejected(self):
+        mw, inner = self._make_middleware()
+        send = AsyncMock()
+        scope = {
+            "type": "http",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Basic dXNlcjpwYXNz")],
+        }
+        await mw(scope, AsyncMock(), send)
+        inner.assert_not_awaited()
+        start_msg = send.await_args_list[0][0][0]
+        assert start_msg["status"] == 401

@@ -19,8 +19,7 @@ transports.  When running over HTTP the server listens on ``::`` port
 from starlette.middleware import Middleware
 
 from .server import mcp
-from .transport import (QueryStringTokenMiddleware, get_auth_token,
-                        get_transport_config)
+from .transport import TokenAuthMiddleware, get_auth_token, get_transport_config
 
 if __name__ == "__main__":
     transport_cfg = get_transport_config()
@@ -28,8 +27,9 @@ if __name__ == "__main__":
 
     if transport in ("http", "sse", "streamable-http"):
         middleware = []
-        if get_auth_token():
-            middleware.append(Middleware(QueryStringTokenMiddleware))
+        token = get_auth_token()
+        if token:
+            middleware.append(Middleware(TokenAuthMiddleware, expected_token=token))
 
         mcp.run(
             transport=transport,

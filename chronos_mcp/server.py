@@ -13,26 +13,21 @@ from .journals import JournalManager
 from .logging_config import setup_logging
 from .tasks import TaskManager
 from .tools import register_all_tools
-from .transport import create_token_validator, get_auth_token, mask_token
+from .transport import get_auth_token, mask_token
 
 logger = setup_logging()
 
-# Configure token-based authentication when CHRONOS_AUTH_TOKEN is set
-_auth_provider = None
+# Log token auth status at startup (actual enforcement is done by
+# TokenAuthMiddleware wired up in __main__.py, not by FastMCP's OAuth-based
+# auth pipeline which would conflict with our simpler middleware approach).
 _expected_token = get_auth_token()
 if _expected_token:
-    from fastmcp.server.auth.providers.debug import DebugTokenVerifier
-
-    _auth_provider = DebugTokenVerifier(
-        validate=create_token_validator(_expected_token),
-        client_id="chronos-client",
-    )
     logger.info(
         "Token authentication enabled for HTTP transport (expected=%s)",
         mask_token(_expected_token),
     )
 
-mcp = FastMCP("chronos-mcp", auth=_auth_provider)
+mcp = FastMCP("chronos-mcp")
 
 logger.info("Initializing Chronos MCP Server...")
 
