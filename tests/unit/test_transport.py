@@ -107,6 +107,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"token=my-secret-token",
             "headers": [],
         }
@@ -119,6 +120,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"",
             "headers": [(b"authorization", b"Bearer my-secret-token")],
         }
@@ -131,6 +133,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"token=wrong-token",
             "headers": [(b"authorization", b"Bearer my-secret-token")],
         }
@@ -144,6 +147,7 @@ class TestTokenAuthMiddleware:
         send = AsyncMock()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"token=wrong",
             "headers": [],
         }
@@ -161,6 +165,7 @@ class TestTokenAuthMiddleware:
         send = AsyncMock()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"",
             "headers": [],
         }
@@ -176,6 +181,7 @@ class TestTokenAuthMiddleware:
         send = AsyncMock()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"token=bad",
             "headers": [],
         }
@@ -198,6 +204,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "websocket",
+            "path": "/mcp",
             "query_string": b"token=my-secret-token",
             "headers": [],
         }
@@ -211,6 +218,7 @@ class TestTokenAuthMiddleware:
         send = AsyncMock()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"foo=bar",
             "headers": [],
         }
@@ -225,6 +233,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"token=my-secret-token&token=wrong",
             "headers": [],
         }
@@ -241,6 +250,7 @@ class TestTokenAuthMiddleware:
         with patch.object(secrets, "compare_digest", return_value=True) as mock_cmp:
             scope = {
                 "type": "http",
+                "path": "/mcp",
                 "query_string": b"token=test",
                 "headers": [],
             }
@@ -253,6 +263,7 @@ class TestTokenAuthMiddleware:
         mw, inner = self._make_middleware()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"",
             "headers": [(b"authorization", b"bearer my-secret-token")],
         }
@@ -266,6 +277,7 @@ class TestTokenAuthMiddleware:
         send = AsyncMock()
         scope = {
             "type": "http",
+            "path": "/mcp",
             "query_string": b"",
             "headers": [(b"authorization", b"Basic dXNlcjpwYXNz")],
         }
@@ -273,3 +285,28 @@ class TestTokenAuthMiddleware:
         inner.assert_not_awaited()
         start_msg = send.await_args_list[0][0][0]
         assert start_msg["status"] == 401
+
+    # --- OAuth discovery endpoints are not protected by token authentication ---
+    @pytest.mark.asyncio
+    async def test_well_known_oauth_path_passthrough_without_token(self):
+        mw, inner = self._make_middleware()
+        scope = {
+            "type": "http",
+            "path": "/.well-known/oauth-protected-resource/mcp",
+            "query_string": b"",
+            "headers": [],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_register_path_passthrough_without_token(self):
+        mw, inner = self._make_middleware()
+        scope = {
+            "type": "http",
+            "path": "/register",
+            "query_string": b"",
+            "headers": [],
+        }
+        await mw(scope, AsyncMock(), AsyncMock())
+        inner.assert_awaited_once()

@@ -31,11 +31,17 @@ if __name__ == "__main__":
         if token:
             middleware.append(Middleware(TokenAuthMiddleware, expected_token=token))
 
+        run_kwargs = {
+            "transport": transport,
+            "host": transport_cfg["host"],
+            "port": transport_cfg["port"],
+            "middleware": middleware,
+        }
+        if transport in ("http", "streamable-http"):
+            run_kwargs["json_response"] = True
+
         mcp.run(
-            transport=transport,
-            host=transport_cfg["host"],
-            port=transport_cfg["port"],
-            middleware=middleware,
+            **run_kwargs,
         )
     else:
         # Default: stdio transport (standard MCP behavior)

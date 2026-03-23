@@ -29,6 +29,8 @@ ENV_PORT = "CHRONOS_PORT"
 DEFAULT_HOST = "::"
 DEFAULT_PORT = 8000
 DEFAULT_TRANSPORT = "http"
+DEFAULT_PROTECTED_PATHS = frozenset({"/mcp", "/sse"})
+DEFAULT_PROTECTED_PATH_PREFIXES = ("/messages/",)
 
 
 class TokenAuthMiddleware:
@@ -55,11 +57,12 @@ class TokenAuthMiddleware:
     @staticmethod
     def _token_from_header(headers: list[tuple[bytes, bytes]]) -> str | None:
         """Extract a Bearer token from the Authorization header."""
+        bearer_prefix = "bearer "
         for name, value in headers:
             if name.lower() == b"authorization":
                 decoded = value.decode("latin-1")
-                if decoded.lower().startswith("bearer "):
-                    return decoded[len("bearer "):]
+                if decoded.lower().startswith(bearer_prefix):
+                    return decoded[len(bearer_prefix):]
                 return None
         return None
 
@@ -72,10 +75,24 @@ class TokenAuthMiddleware:
         values = params.get("token")
         return values[0] if values else None
 
+    @staticmethod
+    def _requires_auth(path: str) -> bool:
+        """Return True when *path* is one of the protected MCP endpoints."""
+        if path in DEFAULT_PROTECTED_PATHS:
+            return True
+        return any(
+            path.startswith(prefix) for prefix in DEFAULT_PROTECTED_PATH_PREFIXES
+        )
+
     # ------------------------------------------------------------------
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if not self._requires_auth(path):
             await self.app(scope, receive, send)
             return
 
