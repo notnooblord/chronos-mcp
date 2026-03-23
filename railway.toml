@@ -1,0 +1,12 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3
+
+[deploy.envVars]
+CHRONOS_TRANSPORT = "http"
+CHRONOS_HOST = "::"

@@ -75,7 +75,11 @@ def get_transport_config() -> dict:
     return {
         "transport": os.environ.get(ENV_TRANSPORT, DEFAULT_TRANSPORT),
         "host": os.environ.get(ENV_HOST, DEFAULT_HOST),
-        "port": int(os.environ.get(ENV_PORT, str(DEFAULT_PORT))),
+        "port": int(
+            os.environ.get(ENV_PORT)
+            or os.environ.get("PORT")
+            or str(DEFAULT_PORT)
+        ),
     }
 
 
