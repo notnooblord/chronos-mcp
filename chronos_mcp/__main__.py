@@ -38,5 +38,5 @@ if __name__ == "__main__":
             middleware=middleware,
         )
     else:
-        # Default: stdio transport (standard MCP behaviour)
+        # Default: stdio transport (standard MCP behavior)
         mcp.run(transport=transport)

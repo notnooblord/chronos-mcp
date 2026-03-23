@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from collections.abc import Callable
 from urllib.parse import parse_qs
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -83,7 +84,7 @@ def get_auth_token() -> str | None:
     return os.environ.get(ENV_AUTH_TOKEN) or None
 
 
-def create_token_validator(expected_token: str):
+def create_token_validator(expected_token: str) -> Callable[[str], bool]:
     """Return a callable suitable for ``DebugTokenVerifier(validate=...)``.
 
     Uses constant-time comparison to avoid timing attacks.
