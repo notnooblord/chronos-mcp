@@ -13,10 +13,23 @@ from .journals import JournalManager
 from .logging_config import setup_logging
 from .tasks import TaskManager
 from .tools import register_all_tools
+from .transport import create_token_validator, get_auth_token
 
 logger = setup_logging()
 
-mcp = FastMCP("chronos-mcp")
+# Configure token-based authentication when CHRONOS_AUTH_TOKEN is set
+_auth_provider = None
+_expected_token = get_auth_token()
+if _expected_token:
+    from fastmcp.server.auth.providers.debug import DebugTokenVerifier
+
+    _auth_provider = DebugTokenVerifier(
+        validate=create_token_validator(_expected_token),
+        client_id="chronos-client",
+    )
+    logger.info("Token authentication enabled for HTTP transport")
+
+mcp = FastMCP("chronos-mcp", auth=_auth_provider)
 
 logger.info("Initializing Chronos MCP Server...")
 
@@ -54,30 +67,16 @@ except Exception as e:
 
 # Export all tools for backwards compatibility
 # This allows tests and existing code to import from server.py
-from .tools.accounts import add_account, list_accounts, remove_account, test_account
-from .tools.bulk import (
-    bulk_create_events,
-    bulk_create_journals,
-    bulk_create_tasks,
-    bulk_delete_events,
-    bulk_delete_journals,
-    bulk_delete_tasks,
-)
+from .tools.accounts import (add_account, list_accounts, remove_account,
+                             test_account)
+from .tools.bulk import (bulk_create_events, bulk_create_journals,
+                         bulk_create_tasks, bulk_delete_events,
+                         bulk_delete_journals, bulk_delete_tasks)
 from .tools.calendars import create_calendar, delete_calendar, list_calendars
-from .tools.events import (
-    create_event,
-    create_recurring_event,
-    delete_event,
-    get_events_range,
-    search_events,
-    update_event,
-)
-from .tools.journals import (
-    create_journal,
-    delete_journal,
-    list_journals,
-    update_journal,
-)
+from .tools.events import (create_event, create_recurring_event, delete_event,
+                           get_events_range, search_events, update_event)
+from .tools.journals import (create_journal, delete_journal, list_journals,
+                             update_journal)
 from .tools.tasks import create_task, delete_task, list_tasks, update_task
 
 __all__ = [
